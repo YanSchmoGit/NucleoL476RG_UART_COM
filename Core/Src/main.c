@@ -18,7 +18,6 @@ int main(void)
     .GPIO_Pin_RX = 2,
     .GPIO_Pin_TX = 3,
     .BaudRate = 115200,
-    .Send.bufferTx = {0},
   };
 
 
@@ -42,9 +41,7 @@ UART_init(&Com1Handler);
     if (receivedData[0] == 'a')
     {
       SendString("a\r\n", &Com1Handler);
-      RCC->AHB2ENR |= RCC_AHB2ENR_GPIOAEN;
-      GPIOA->MODER &= ~(GPIO_MODER_MODE5_Msk);
-      GPIOA->MODER |= GPIO_MODER_MODE5_0;
+
       GPIOA->BSRR |= GPIO_BSRR_BS5;
       receivedData[0] = '0';
     }
@@ -52,9 +49,6 @@ UART_init(&Com1Handler);
     if (receivedData[0] == 'b')
     {
       SendString("b\r\n", &Com1Handler);
-      RCC->AHB2ENR |= RCC_AHB2ENR_GPIOAEN;
-      GPIOA->MODER &= ~(GPIO_MODER_MODE5_Msk);
-      GPIOA->MODER |= GPIO_MODER_MODE5_0;
       GPIOA->BSRR |= GPIO_BSRR_BR5;
       receivedData[0] = '0';
     }
