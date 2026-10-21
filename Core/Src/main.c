@@ -26,19 +26,38 @@ int main(void)
 
 UART_init(&Com1Handler);
 
+  char receivedData[16] = {0};
+
   // SendString("TestNeu\r\n");
   SendString("Startup...\r\n", &Com1Handler);
-  SendString("Eingabe:\r\n", &Com1Handler);
   while (1)
   {
-    if (data[0] == 'a')
+
+    // Check received data
+    ReceiveString(receivedData, &Com1Handler);
+
+
+
+
+    if (receivedData[0] == 'a')
     {
+      SendString("a\r\n", &Com1Handler);
       RCC->AHB2ENR |= RCC_AHB2ENR_GPIOAEN;
       GPIOA->MODER &= ~(GPIO_MODER_MODE5_Msk);
       GPIOA->MODER |= GPIO_MODER_MODE5_0;
       GPIOA->BSRR |= GPIO_BSRR_BS5;
+      receivedData[0] = '0';
     }
 
+    if (receivedData[0] == 'b')
+    {
+      SendString("b\r\n", &Com1Handler);
+      RCC->AHB2ENR |= RCC_AHB2ENR_GPIOAEN;
+      GPIOA->MODER &= ~(GPIO_MODER_MODE5_Msk);
+      GPIOA->MODER |= GPIO_MODER_MODE5_0;
+      GPIOA->BSRR |= GPIO_BSRR_BR5;
+      receivedData[0] = '0';
+    }
 
   }
 

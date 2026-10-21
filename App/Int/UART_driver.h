@@ -22,7 +22,11 @@ typedef struct
 typedef struct
 {
     uint8_t bufferRx[USART_RX_BUFFER_SIZE];
-};
+    uint8_t bufferOrder[USART_RX_BUFFER_SIZE];
+    uint32_t volatile pointerTail;
+    uint8_t volatile pointerOrder;
+    uint8_t idlePending;
+} USARTHandlerReceive_t;
 
 typedef struct
 {
@@ -34,13 +38,14 @@ typedef struct
     uint8_t GPIO_Pin_RX;
     uint32_t BaudRate;
     USARTHandlerSend_t Send;
-    uint8_t bufferTxPointer;
+    USARTHandlerReceive_t Receive;
 } USARTHandler_t;
-
-extern char data[20];
 
 void UART_init(USARTHandler_t* USARTHandle);
 
 uint8_t SendString(char* str, USARTHandler_t* USARTHandle);
+
+uint8_t ReceiveString(char* str, USARTHandler_t* USARTHandler);
+
 
 #endif //NUCLEO_UART_COM_UART_DRIVER_H

@@ -7,8 +7,6 @@
 #include "string.h"
 #include "stm32l476xx.h"
 
-char data[20];
-
 USARTHandler_t* handlerUSART2 = NULL;
 
 uint8_t InitGPIOPort(GPIO_TypeDef* GPIOPort, uint8_t GPIO_Pin_TX, uint8_t GPIO_Pin_RX)
@@ -113,11 +111,16 @@ void UART_init(USARTHandler_t* USARTHandle)
     // Set word length - 1 Start bit, 8 data bits, n stop bits
     USARTHandle->USARTx->CR1 &= ~(USART_CR1_PCE_Msk); // Disable parity
 
+    USARTHandle->USARTx->CR1 |= USART_CR1_IDLEIE; // Enable idle interrupt for receive data
+
     USARTHandle->USARTx->CR3 |= USART_CR3_DMAT; // Enable DMA for transmitter
     USARTHandle->USARTx->CR3 |= USART_CR3_DMAR; // Enable DMA for receiver
 
     USARTHandle->USARTx->CR1 |= USART_CR1_UE; //Enable USART
     USARTHandle->USARTx->CR1 |= USART_CR1_TE | USART_CR1_RE | USART_CR1_UE; // Start USART transmitter & receiver
+
+    NVIC_SetPriority(USART2_IRQn, 5);
+    NVIC_EnableIRQ(USART2_IRQn);
 
     // Configure DMA for USART
 
@@ -150,8 +153,8 @@ void UART_init(USARTHandler_t* USARTHandle)
     DMA1_CSELR->CSELR &= ~DMA_CSELR_C6S_Msk; // Reset selection
     DMA1_CSELR->CSELR |= (2 << DMA_CSELR_C6S_Pos); // Map to USART2_RX -> see reference manual
     DMA1_Channel6->CPAR = (uint32_t)&USARTHandle->USARTx->RDR; // Set peripheral register to DMA
-    DMA1_Channel6->CMAR = (uint32_t)data; //  Pointer to data buffer
-    DMA1_Channel6->CNDTR = 3;
+    DMA1_Channel6->CMAR = (uint32_t)&USARTHandle->Receive.bufferRx; //  Pointer to data buffer
+    DMA1_Channel6->CNDTR = USART_TX_BUFFER_SIZE;
     DMA1_Channel6->CCR |= DMA_CCR_EN;
 }
 
@@ -211,6 +214,39 @@ uint8_t SendString(char* str, USARTHandler_t* USARTHandle)
     return 0;
 }
 
+uint8_t ReceiveString(char* str, USARTHandler_t* USARTHandle)
+{
+    // Check for idle flag
+    if (USARTHandle->Receive.idlePending == 0)
+    {
+        // Check for return
+        if (USARTHandle->Receive.bufferOrder[USARTHandle->Receive.pointerOrder - 1] == '\r')
+        {
+
+            for (size_t i = 0; i < USARTHandle->Receive.pointerOrder - 1; i++)
+            {
+                str[i] = USARTHandle->Receive.bufferOrder[i];
+            }
+            USARTHandle->Receive.pointerOrder = 0;
+        }
+
+        return 0;
+    }
+
+    USARTHandle->Receive.idlePending = 0;
+    const uint32_t headPointer = (USART_RX_BUFFER_SIZE - DMA1_Channel6->CNDTR) % USART_RX_BUFFER_SIZE;
+
+    // Get data from receive buffer
+    while (USARTHandle->Receive.pointerTail != headPointer)
+    {
+        USARTHandle->Receive.bufferOrder[USARTHandle->Receive.pointerOrder] = USARTHandle->Receive.bufferRx[USARTHandle->Receive.pointerTail];
+        USARTHandle->Receive.pointerOrder++;
+        USARTHandle->Receive.pointerTail = (USARTHandle->Receive.pointerTail + 1) % USART_RX_BUFFER_SIZE;
+    }
+
+    return 1;
+}
+
 void DMA1_Channel7_IRQHandler(void)
 {
     if (DMA1->ISR & DMA_ISR_TCIF7)
@@ -223,5 +259,19 @@ void DMA1_Channel7_IRQHandler(void)
         handlerUSART2->Send.lengthDMA = 0;
 
         StartTX(handlerUSART2);
+    }
+}
+
+void USART2_IRQHandler(void)
+{
+    if (handlerUSART2->USARTx->ISR & USART_ISR_IDLE)
+    {
+        handlerUSART2->USARTx->ICR |= USART_ICR_IDLECF;
+        handlerUSART2->Receive.idlePending = 1;
+    }
+
+    if (handlerUSART2->USARTx->ISR & USART_ISR_ORE)
+    {
+        handlerUSART2->USARTx->ICR |= USART_ICR_ORECF;
     }
 }
