@@ -7,7 +7,7 @@
 #include "string.h"
 #include "stm32l476xx.h"
 
-USARTHandler_t* handlerUSART2 = NULL;
+USARTHandler_t* handlerUSART = NULL;
 
 uint8_t InitGPIOPort(GPIO_TypeDef* GPIOPort, uint8_t GPIO_Pin_TX, uint8_t GPIO_Pin_RX)
 {
@@ -82,21 +82,38 @@ uint8_t InitGPIOPort(GPIO_TypeDef* GPIOPort, uint8_t GPIO_Pin_TX, uint8_t GPIO_P
     return 0;
 }
 
+USARTMap_t* AssignUsartDma(USARTHandler_t* USARTHandle)
+{
+    for (size_t i = 0; i < sizeof(USARTMapStorage); i++)
+    {
+        if (USARTHandle->USARTMap.USARTx == USARTMapStorage[i].USARTx)
+        {
+            return &USARTMapStorage[i];
+        }
+    }
+
+    return NULL;
+
+}
+
 void UART_init(USARTHandler_t* USARTHandle)
 {
     // Init GPIO
     InitGPIOPort(USARTHandle->GPIOPort, USARTHandle->GPIO_Pin_TX, USARTHandle->GPIO_Pin_RX);
 
+    // Check channel USART
+    USARTHandle->USARTMap = *AssignUsartDma(USARTHandle);
+
     // Init UART
-    if (USARTHandle->USARTx == USART1)
+    if (USARTHandle->USARTMap.USARTx == USART1)
     {
         RCC->APB2ENR |= RCC_APB2ENR_USART1EN;
     }
-    else if (USARTHandle->USARTx == USART2)
+    else if (USARTHandle->USARTMap.USARTx == USART2)
     {
         RCC->APB1ENR1 |= RCC_APB1ENR1_USART2EN;
     }
-    else if (USARTHandle->USARTx == USART3)
+    else if (USARTHandle->USARTMap.USARTx == USART3)
     {
         RCC->APB1ENR1 |= RCC_APB1ENR1_USART3EN;
     }
@@ -105,57 +122,65 @@ void UART_init(USARTHandler_t* USARTHandle)
 
     // Bauderate - Set bauderate to handler value
     uint32_t systemClock = SystemCoreClock;
-    USARTHandle->USARTx->BRR = (uint32_t)systemClock / USARTHandle->BaudRate;
+    USARTHandle->USARTMap.USARTx->BRR = (uint32_t)systemClock / USARTHandle->BaudRate;
 
-    USARTHandle->USARTx->CR1 &= ~(USART_CR1_M0_Msk | USART_CR1_M1_Msk);
+    USARTHandle->USARTMap.USARTx->CR1 &= ~(USART_CR1_M0_Msk | USART_CR1_M1_Msk);
     // Set word length - 1 Start bit, 8 data bits, n stop bits
-    USARTHandle->USARTx->CR1 &= ~(USART_CR1_PCE_Msk); // Disable parity
+    USARTHandle->USARTMap.USARTx->CR1 &= ~(USART_CR1_PCE_Msk); // Disable parity
 
-    USARTHandle->USARTx->CR1 |= USART_CR1_IDLEIE; // Enable idle interrupt for receive data
+    USARTHandle->USARTMap.USARTx->CR1 |= USART_CR1_IDLEIE; // Enable idle interrupt for receive data
 
-    USARTHandle->USARTx->CR3 |= USART_CR3_DMAT; // Enable DMA for transmitter
-    USARTHandle->USARTx->CR3 |= USART_CR3_DMAR; // Enable DMA for receiver
+    USARTHandle->USARTMap.USARTx->CR3 |= USART_CR3_DMAT; // Enable DMA for transmitter
+    USARTHandle->USARTMap.USARTx->CR3 |= USART_CR3_DMAR; // Enable DMA for receiver
 
-    USARTHandle->USARTx->CR1 |= USART_CR1_UE; //Enable USART
-    USARTHandle->USARTx->CR1 |= USART_CR1_TE | USART_CR1_RE | USART_CR1_UE; // Start USART transmitter & receiver
+    USARTHandle->USARTMap.USARTx->CR1 |= USART_CR1_UE; //Enable USART
+    USARTHandle->USARTMap.USARTx->CR1 |= USART_CR1_TE | USART_CR1_RE | USART_CR1_UE; // Start USART transmitter & receiver
 
-    NVIC_SetPriority(USART2_IRQn, 5);
-    NVIC_EnableIRQ(USART2_IRQn);
+    NVIC_SetPriority(USARTHandle->USARTMap.Interrupt_Rx, 5);
+    NVIC_EnableIRQ(USARTHandle->USARTMap.Interrupt_Rx);
 
     // Configure DMA for USART
 
     // Enable clock for DMA
-    RCC->AHB1ENR |= RCC_AHB1ENR_DMA1EN;
+    // Check for DMA
+    if (USARTHandle->USARTMap.DMAx == DMA1)
+    {
+        RCC->AHB1ENR |= RCC_AHB1ENR_DMA1EN;
+    }
+    else if (USARTHandle->USARTMap.DMAx == DMA2)
+    {
+        RCC->AHB1ENR |= RCC_AHB1ENR_DMA2EN;
+    }
 
-    // Configure DMA channel 7 - Transmit
-    DMA1_Channel7->CCR &= ~DMA_CCR_EN; // Disable DMA for configuration
-    DMA1_Channel7->CCR |= DMA_CCR_DIR | DMA_CCR_MINC; // Direction --> Read from memory, Memory increment mode
-    DMA1_Channel7->CCR |= DMA_CCR_TCIE; // Transfer complete interrupt
+    // Configure DMA channel - Transmit
+    USARTHandle->USARTMap.DMA_Channel_Rx->CCR &= ~DMA_CCR_EN; // Disable DMA for configuration
+    USARTHandle->USARTMap.DMA_Channel_Rx->CCR |= DMA_CCR_DIR | DMA_CCR_MINC; // Direction --> Read from memory, Memory increment mode
+    USARTHandle->USARTMap.DMA_Channel_Rx->CCR |= DMA_CCR_TCIE; // Transfer complete interrupt
 
-    DMA1_CSELR->CSELR &= ~DMA_CSELR_C7S_Msk; // Reset selection
-    DMA1_CSELR->CSELR |= (2 << DMA_CSELR_C7S_Pos); // Map to USART2_TX -> see reference manual
+    USARTHandle->USARTMap.DMA_request->CSELR &=  ~( 0xFUL << ((USARTHandle->USARTMap.DMA_Channel_Rx_Number - 1) * 4));// Reset selection
+    USARTHandle->USARTMap.DMA_request->CSELR |= (2 << ((USARTHandle->USARTMap.DMA_Channel_Rx_Number - 1) * 4)); // Map to USARTx_TX -> see reference manual
 
-    DMA1_Channel7->CPAR = (volatile uint32_t)&USARTHandle->USARTx->TDR; // Set peripheral register to DMA
+    USARTHandle->USARTMap.DMA_Channel_Rx->CPAR = (volatile uint32_t)&USARTHandle->USARTMap.USARTx->TDR; // Set peripheral register to DMA
 
     USARTHandle->Send.pointerHead = 0;
     USARTHandle->Send.pointerTail = 0;
     USARTHandle->Send.lengthDMA = 0;
 
-    handlerUSART2 = USARTHandle;
+    handlerUSART = USARTHandle; // Assign handle for interrupt
 
-    NVIC_SetPriority(DMA1_Channel7_IRQn, 5);
-    NVIC_EnableIRQ(DMA1_Channel7_IRQn);
+    NVIC_SetPriority(USARTHandle->USARTMap.Interrupt_Tx, 5);
+    NVIC_EnableIRQ(USARTHandle->USARTMap.Interrupt_Tx);
 
-    // Configure DMA channel 7 - Receive
-    DMA1_Channel6->CCR &= ~DMA_CCR_EN;
-    DMA1_Channel6->CCR |= DMA_CCR_MINC | DMA_CCR_CIRC;
+    // Configure DMA channel - Receive
+    USARTHandle->USARTMap.DMA_Channel_Tx->CCR &= ~DMA_CCR_EN;
+    USARTHandle->USARTMap.DMA_Channel_Tx->CCR |= DMA_CCR_MINC | DMA_CCR_CIRC;
 
-    DMA1_CSELR->CSELR &= ~DMA_CSELR_C6S_Msk; // Reset selection
-    DMA1_CSELR->CSELR |= (2 << DMA_CSELR_C6S_Pos); // Map to USART2_RX -> see reference manual
-    DMA1_Channel6->CPAR = (uint32_t)&USARTHandle->USARTx->RDR; // Set peripheral register to DMA
-    DMA1_Channel6->CMAR = (uint32_t)&USARTHandle->Receive.bufferRx; //  Pointer to data buffer
-    DMA1_Channel6->CNDTR = USART_TX_BUFFER_SIZE;
-    DMA1_Channel6->CCR |= DMA_CCR_EN;
+    USARTHandle->USARTMap.DMA_request->CSELR &= ~( 0xFUL << ((USARTHandle->USARTMap.DMA_Channel_Tx_Number - 1) * 4)); // Reset selection
+    USARTHandle->USARTMap.DMA_request->CSELR |= (2 << ((USARTHandle->USARTMap.DMA_Channel_Tx_Number - 1) * 4)); // Map to USARTx_RX -> see reference manual
+    USARTHandle->USARTMap.DMA_Channel_Tx->CPAR = (uint32_t)&USARTHandle->USARTMap.USARTx->RDR; // Set peripheral register to DMA
+    USARTHandle->USARTMap.DMA_Channel_Tx->CMAR = (uint32_t)&USARTHandle->Receive.bufferRx; //  Pointer to data buffer
+    USARTHandle->USARTMap.DMA_Channel_Tx->CNDTR = USART_TX_BUFFER_SIZE;
+    USARTHandle->USARTMap.DMA_Channel_Tx->CCR |= DMA_CCR_EN;
 }
 
 void StartTX(USARTHandler_t* USARTHandle)
@@ -175,19 +200,19 @@ void StartTX(USARTHandler_t* USARTHandle)
         USARTHandle->Send.lengthDMA = USART_TX_BUFFER_SIZE - USARTHandle->Send.pointerTail;
     }
 
-    DMA1_Channel7->CCR &= ~DMA_CCR_EN; // Disable DMA for configuration
-    DMA1->IFCR = DMA_IFCR_CTCIF7; // Delete transfer-complete-flag
-    DMA1_Channel7->CMAR = (uint32_t)&USARTHandle->Send.bufferTx[USARTHandle->Send.pointerTail];
+    USARTHandle->USARTMap.DMA_Channel_Rx->CCR &= ~DMA_CCR_EN; // Disable DMA for configuration
+    USARTHandle->USARTMap.DMAx->IFCR = (0x2UL << ((USARTHandle->USARTMap.DMA_Channel_Rx_Number - 1) * 4)); // Delete transfer-complete-flag
+    USARTHandle->USARTMap.DMA_Channel_Rx->CMAR = (uint32_t)&USARTHandle->Send.bufferTx[USARTHandle->Send.pointerTail];
     //  Pointer to data buffer
-    DMA1_Channel7->CNDTR = (uint32_t)USARTHandle->Send.lengthDMA;
-    DMA1_Channel7->CCR |= DMA_CCR_EN; // Enable DMA
+    USARTHandle->USARTMap.DMA_Channel_Rx->CNDTR = (uint32_t)USARTHandle->Send.lengthDMA;
+    USARTHandle->USARTMap.DMA_Channel_Rx->CCR |= DMA_CCR_EN; // Enable DMA
 }
 
 
 uint8_t SendString(char* str, USARTHandler_t* USARTHandle)
 {
     // Disable interrupt
-    NVIC_DisableIRQ(DMA1_Channel7_IRQn);
+    NVIC_DisableIRQ(USARTHandle->USARTMap.Interrupt_Tx);
 
     // Check space in buffer
     const size_t strLen = strlen(str); // Check length of transmit string
@@ -197,7 +222,7 @@ uint8_t SendString(char* str, USARTHandler_t* USARTHandle)
     if (strLen > USART_TX_BUFFER_SIZE - 1 - bufferUsed)
     {
         // Send String is to long for buffer
-        NVIC_EnableIRQ(DMA1_Channel7_IRQn);
+        NVIC_EnableIRQ(USARTHandle->USARTMap.Interrupt_Tx);
         return 1;
     }
 
@@ -210,7 +235,7 @@ uint8_t SendString(char* str, USARTHandler_t* USARTHandle)
     }
 
     StartTX(USARTHandle);
-    NVIC_EnableIRQ(DMA1_Channel7_IRQn);
+    NVIC_EnableIRQ(USARTHandle->USARTMap.Interrupt_Tx);
     return 0;
 }
 
@@ -234,7 +259,7 @@ uint8_t ReceiveString(char* str, USARTHandler_t* USARTHandle)
     }
 
     USARTHandle->Receive.idlePending = 0;
-    const uint32_t headPointer = (USART_RX_BUFFER_SIZE - DMA1_Channel6->CNDTR) % USART_RX_BUFFER_SIZE;
+    const uint32_t headPointer = (USART_RX_BUFFER_SIZE - handlerUSART->USARTMap.DMA_Channel_Tx->CNDTR) % USART_RX_BUFFER_SIZE;
 
     // Get data from receive buffer
     while (USARTHandle->Receive.pointerTail != headPointer)
@@ -249,29 +274,29 @@ uint8_t ReceiveString(char* str, USARTHandler_t* USARTHandle)
 
 void DMA1_Channel7_IRQHandler(void)
 {
-    if (DMA1->ISR & DMA_ISR_TCIF7)
+    if (handlerUSART->USARTMap.DMAx->ISR & (0x2UL << ((handlerUSART->USARTMap.DMA_Channel_Rx_Number - 1) * 4))) // check for DMA_ISR_TCIFx Flag
     {
-        DMA1->IFCR = DMA_IFCR_CTCIF7;
-        DMA1_Channel7->CCR &= ~DMA_CCR_EN;
+        handlerUSART->USARTMap.DMAx->IFCR = (0x2UL << ((handlerUSART->USARTMap.DMA_Channel_Rx_Number - 1) * 4));
+        handlerUSART->USARTMap.DMA_Channel_Rx->CCR &= ~DMA_CCR_EN;
 
-        handlerUSART2->Send.pointerTail = (handlerUSART2->Send.pointerTail + handlerUSART2->Send.lengthDMA) %
+        handlerUSART->Send.pointerTail = (handlerUSART->Send.pointerTail + handlerUSART->Send.lengthDMA) %
             USART_TX_BUFFER_SIZE;
-        handlerUSART2->Send.lengthDMA = 0;
+        handlerUSART->Send.lengthDMA = 0;
 
-        StartTX(handlerUSART2);
+        StartTX(handlerUSART);
     }
 }
 
 void USART2_IRQHandler(void)
 {
-    if (handlerUSART2->USARTx->ISR & USART_ISR_IDLE)
+    if (handlerUSART->USARTMap.USARTx->ISR & USART_ISR_IDLE)
     {
-        handlerUSART2->USARTx->ICR |= USART_ICR_IDLECF;
-        handlerUSART2->Receive.idlePending = 1;
+        handlerUSART->USARTMap.USARTx->ICR |= USART_ICR_IDLECF;
+        handlerUSART->Receive.idlePending = 1;
     }
 
-    if (handlerUSART2->USARTx->ISR & USART_ISR_ORE)
+    if (handlerUSART->USARTMap.USARTx->ISR & USART_ISR_ORE)
     {
-        handlerUSART2->USARTx->ICR |= USART_ICR_ORECF;
+        handlerUSART->USARTMap.USARTx->ICR |= USART_ICR_ORECF;
     }
 }

@@ -13,8 +13,9 @@ int main(void)
   // USART com
   USARTHandler_t Com1Handler =
   {
-    .USARTx = USART2,
+    .USARTMap.USARTx = USART2,
     .GPIOPort = GPIOA,
+    .USARTMap.DMAx = DMA1,
     .GPIO_Pin_RX = 2,
     .GPIO_Pin_TX = 3,
     .BaudRate = 115200,
