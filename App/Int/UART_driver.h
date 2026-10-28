@@ -6,7 +6,7 @@
 #define NUCLEO_UART_COM_UART_DRIVER_H
 #include "stm32l476xx.h"
 #include <string.h>
-// USART handle
+
 
 #define USART_TX_BUFFER_SIZE 256
 #define USART_RX_BUFFER_SIZE 256
